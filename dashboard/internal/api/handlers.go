@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -46,6 +48,20 @@ func (h *Handlers) Register(app *fiber.App) {
 	g.Get("/schedules/:id/logs", h.scheduleLogs)
 	g.Post("/schedules/preview", h.previewSchedule)
 	g.Get("/logs", h.recentLogs)
+
+	// AI Reply: thin proxy to core /aireply/*. All endpoints require
+	// X-Device-Id header (core resolves it to a JID and scopes config /
+	// knowledgebase / chat-settings / logs per device).
+	g.Get("/aireply/config", h.aiGetConfig)
+	g.Put("/aireply/config", h.aiSaveConfig)
+	g.Post("/aireply/config/test", h.aiTestConfig)
+	g.Post("/aireply/documents", h.aiUploadDocument)
+	g.Get("/aireply/documents", h.aiListDocuments)
+	g.Delete("/aireply/documents/:id", h.aiDeleteDocument)
+	g.Post("/aireply/documents/reindex", h.aiReindexDocuments)
+	g.Get("/aireply/chat-settings", h.aiListChatSettings)
+	g.Put("/aireply/chat-settings/:chat_jid", h.aiSetChatEnabled)
+	g.Get("/aireply/logs", h.aiListLogs)
 }
 
 // --- proxies --------------------------------------------------------------
@@ -55,7 +71,7 @@ func (h *Handlers) Register(app *fiber.App) {
 func (h *Handlers) health(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"ok":           true,
-		"build":        "dashboard-v1.1-device-mgmt",
+		"build":        "dashboard-v1.2-aireply",
 		"upstream_url": h.WA.BaseURL,
 		"routes": []string{
 			"GET    /api/_health",
@@ -79,6 +95,16 @@ func (h *Handlers) health(c *fiber.Ctx) error {
 			"GET    /api/schedules/:id/logs",
 			"POST   /api/schedules/preview",
 			"GET    /api/logs",
+			"GET    /api/aireply/config",
+			"PUT    /api/aireply/config",
+			"POST   /api/aireply/config/test",
+			"POST   /api/aireply/documents",
+			"GET    /api/aireply/documents",
+			"DELETE /api/aireply/documents/:id",
+			"POST   /api/aireply/documents/reindex",
+			"GET    /api/aireply/chat-settings",
+			"PUT    /api/aireply/chat-settings/:chat_jid",
+			"GET    /api/aireply/logs",
 		},
 	})
 }
@@ -580,5 +606,140 @@ func parseLocalTime(s, tz string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("unrecognized datetime format %q", s)
+}
+
+// --- AI Reply proxies -----------------------------------------------------
+// Device id is taken from the X-Device-Id header (consistent with core's
+// expectation). Upload streams the multipart body verbatim — no re-parse.
+
+func aiDeviceID(c *fiber.Ctx) (string, error) {
+	id := strings.TrimSpace(c.Get("X-Device-Id"))
+	if id == "" {
+		// Fall back to query string so links can carry it too.
+		id = strings.TrimSpace(c.Query("device_id"))
+	}
+	if id == "" {
+		return "", c.Status(400).JSON(fiber.Map{"error": "X-Device-Id header required"})
+	}
+	return id, nil
+}
+
+func aiForward(c *fiber.Ctx, resp *wa.Response, err error) error {
+	if err != nil {
+		body := fiber.Map{"error": err.Error()}
+		if resp != nil {
+			body["upstream"] = resp
+		}
+		return c.Status(502).JSON(body)
+	}
+	return c.JSON(resp)
+}
+
+func (h *Handlers) aiGetConfig(c *fiber.Ctx) error {
+	id, err := aiDeviceID(c)
+	if err != nil {
+		return nil
+	}
+	resp, e := h.WA.GetAIConfig(id)
+	return aiForward(c, resp, e)
+}
+
+func (h *Handlers) aiSaveConfig(c *fiber.Ctx) error {
+	id, err := aiDeviceID(c)
+	if err != nil {
+		return nil
+	}
+	resp, e := h.WA.SaveAIConfig(id, c.Body())
+	return aiForward(c, resp, e)
+}
+
+func (h *Handlers) aiTestConfig(c *fiber.Ctx) error {
+	id, err := aiDeviceID(c)
+	if err != nil {
+		return nil
+	}
+	resp, e := h.WA.TestAIConfig(id)
+	return aiForward(c, resp, e)
+}
+
+func (h *Handlers) aiUploadDocument(c *fiber.Ctx) error {
+	id, err := aiDeviceID(c)
+	if err != nil {
+		return nil
+	}
+	ct := c.Get("Content-Type")
+	if !strings.HasPrefix(ct, "multipart/form-data") {
+		return c.Status(400).JSON(fiber.Map{"error": "expected multipart/form-data"})
+	}
+	resp, e := h.WA.UploadAIDocument(id, bytes.NewReader(c.Body()), ct)
+	return aiForward(c, resp, e)
+}
+
+func (h *Handlers) aiListDocuments(c *fiber.Ctx) error {
+	id, err := aiDeviceID(c)
+	if err != nil {
+		return nil
+	}
+	resp, e := h.WA.ListAIDocuments(id)
+	return aiForward(c, resp, e)
+}
+
+func (h *Handlers) aiDeleteDocument(c *fiber.Ctx) error {
+	id, err := aiDeviceID(c)
+	if err != nil {
+		return nil
+	}
+	resp, e := h.WA.DeleteAIDocument(id, c.Params("id"))
+	return aiForward(c, resp, e)
+}
+
+func (h *Handlers) aiReindexDocuments(c *fiber.Ctx) error {
+	id, err := aiDeviceID(c)
+	if err != nil {
+		return nil
+	}
+	resp, e := h.WA.ReindexAIDocuments(id)
+	return aiForward(c, resp, e)
+}
+
+func (h *Handlers) aiListChatSettings(c *fiber.Ctx) error {
+	id, err := aiDeviceID(c)
+	if err != nil {
+		return nil
+	}
+	resp, e := h.WA.ListAIChatSettings(id)
+	return aiForward(c, resp, e)
+}
+
+func (h *Handlers) aiSetChatEnabled(c *fiber.Ctx) error {
+	id, err := aiDeviceID(c)
+	if err != nil {
+		return nil
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	// Fiber 2.52 returns path params verbatim — encoded "%40" stays as
+	// "%40" instead of becoming "@". Decode here so the wa client gets a
+	// clean JID; otherwise re-escaping double-encodes and core rejects.
+	jid, err := url.PathUnescape(c.Params("chat_jid"))
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid chat_jid: " + err.Error()})
+	}
+	resp, e := h.WA.SetAIChatEnabled(id, jid, body.Enabled)
+	return aiForward(c, resp, e)
+}
+
+func (h *Handlers) aiListLogs(c *fiber.Ctx) error {
+	id, err := aiDeviceID(c)
+	if err != nil {
+		return nil
+	}
+	limit, _ := strconv.Atoi(c.Query("limit", "50"))
+	resp, e := h.WA.ListAILogs(id, c.Query("chat_jid"), c.Query("status"), limit)
+	return aiForward(c, resp, e)
 }
 

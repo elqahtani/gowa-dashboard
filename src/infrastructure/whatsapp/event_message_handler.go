@@ -36,8 +36,12 @@ func handleMessage(ctx context.Context, evt *events.Message, chatStorageRepo dom
 	// Auto-mark message as read if configured
 	handleAutoMarkRead(ctx, evt, client)
 
-	// Handle auto-reply if configured
-	handleAutoReply(ctx, evt, chatStorageRepo, client)
+	// Handle AI auto-reply first (RAG-grounded). If AI takes ownership of
+	// this message, the static auto-reply is skipped to avoid double replies.
+	if !handleAIAutoReply(ctx, evt, client) {
+		// Handle auto-reply if configured
+		handleAutoReply(ctx, evt, chatStorageRepo, client)
+	}
 
 	// Forward to webhook if configured
 	handleWebhookForward(ctx, evt, client)

@@ -129,6 +129,9 @@ func restServer(_ *cobra.Command, _ []string) {
 		rest.InitRestMessage(r, messageUsecase)
 		rest.InitRestGroup(r, groupUsecase)
 		rest.InitRestNewsletter(r, newsletterUsecase)
+		if aiReplyService != nil {
+			rest.InitRestAIReply(r, aiReplyService)
+		}
 		websocket.RegisterRoutes(r, appUsecase)
 	}
 

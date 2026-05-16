@@ -1269,5 +1269,94 @@ func (r *SQLiteRepository) getMigrations() []string {
 
 		// Migration 16: JSON metadata for Meta Ads referral/attribution (CTWA)
 		`ALTER TABLE messages ADD COLUMN referral_metadata TEXT DEFAULT ''`,
+
+		// Migration 17: AI Reply config per device
+		`CREATE TABLE IF NOT EXISTS ai_config (
+			device_id VARCHAR(255) PRIMARY KEY,
+			provider VARCHAR(50) NOT NULL,
+			model VARCHAR(255) NOT NULL,
+			api_key_encrypted BLOB NOT NULL,
+			base_url TEXT DEFAULT '',
+			embed_provider VARCHAR(50) DEFAULT '',
+			embed_model VARCHAR(255) DEFAULT '',
+			embed_api_key_encrypted BLOB,
+			embed_base_url TEXT DEFAULT '',
+			system_prompt TEXT NOT NULL DEFAULT '',
+			style_preset VARCHAR(50) NOT NULL DEFAULT 'customer_service_formal',
+			max_tokens INTEGER DEFAULT 500,
+			temperature REAL DEFAULT 0.3,
+			top_k INTEGER DEFAULT 4,
+			retrieval_threshold REAL DEFAULT 0.3,
+			guardrail_enabled BOOLEAN DEFAULT 1,
+			out_of_scope_message TEXT DEFAULT 'Maaf, saya hanya bisa bantu seputar topik yang ada di knowledgebase kami.',
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+
+		// Migration 18: KB documents metadata
+		`CREATE TABLE IF NOT EXISTS kb_documents (
+			id VARCHAR(255) PRIMARY KEY,
+			device_id VARCHAR(255) NOT NULL,
+			filename VARCHAR(512) NOT NULL,
+			mime_type VARCHAR(128) NOT NULL DEFAULT '',
+			file_size INTEGER NOT NULL DEFAULT 0,
+			chunk_count INTEGER DEFAULT 0,
+			status VARCHAR(32) NOT NULL DEFAULT 'processing',
+			error_message TEXT DEFAULT '',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+
+		// Migration 19
+		`CREATE INDEX IF NOT EXISTS idx_kb_docs_device ON kb_documents(device_id)`,
+
+		// Migration 20: KB chunks (text + embedding BLOB; we run cosine
+		// similarity in Go to keep the storage layer portable across
+		// SQLite/PostgreSQL without extra extensions).
+		`CREATE TABLE IF NOT EXISTS kb_chunks (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			document_id VARCHAR(255) NOT NULL,
+			device_id VARCHAR(255) NOT NULL,
+			chunk_index INTEGER NOT NULL DEFAULT 0,
+			content TEXT NOT NULL,
+			token_count INTEGER DEFAULT 0,
+			embedding BLOB,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+
+		// Migration 21
+		`CREATE INDEX IF NOT EXISTS idx_kb_chunks_device ON kb_chunks(device_id)`,
+
+		// Migration 22
+		`CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc ON kb_chunks(document_id)`,
+
+		// Migration 23: per-chat AI auto-reply toggle
+		`CREATE TABLE IF NOT EXISTS ai_chat_settings (
+			device_id VARCHAR(255) NOT NULL,
+			chat_jid VARCHAR(255) NOT NULL,
+			enabled BOOLEAN DEFAULT 0,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (device_id, chat_jid)
+		)`,
+
+		// Migration 24: AI reply audit log
+		`CREATE TABLE IF NOT EXISTS ai_reply_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			device_id VARCHAR(255) NOT NULL,
+			chat_jid VARCHAR(255) NOT NULL,
+			query TEXT NOT NULL,
+			retrieved_chunk_ids TEXT DEFAULT '',
+			response TEXT DEFAULT '',
+			latency_ms INTEGER DEFAULT 0,
+			tokens_in INTEGER DEFAULT 0,
+			tokens_out INTEGER DEFAULT 0,
+			status VARCHAR(32) NOT NULL,
+			error_message TEXT DEFAULT '',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+
+		// Migration 25
+		`CREATE INDEX IF NOT EXISTS idx_ai_logs_device_chat ON ai_reply_logs(device_id, chat_jid)`,
+
+		// Migration 26
+		`CREATE INDEX IF NOT EXISTS idx_ai_logs_created ON ai_reply_logs(created_at)`,
 	}
 }

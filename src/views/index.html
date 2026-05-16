@@ -164,6 +164,18 @@
         <chat-messages></chat-messages>
     </div>
 
+    <div class="ui horizontal divider">
+        AI Auto-Reply
+    </div>
+
+    <div class="ui three column doubling grid cards">
+        <a-i-config></a-i-config>
+        <a-i-knowledgebase></a-i-knowledgebase>
+        <a-i-chat-toggle></a-i-chat-toggle>
+        <a-i-reply-logs></a-i-reply-logs>
+    </div>
+
+
 </div>
 <script>
     window.TYPEGROUP = "@g.us";
@@ -248,6 +260,10 @@
     import ChatList from "{{ .AppBasePath }}/components/ChatList.js";
     import ChatMessages from "{{ .AppBasePath }}/components/ChatMessages.js";
     import DeviceManager from "{{ .AppBasePath }}/components/DeviceManager.js";
+    import AIConfig from "{{ .AppBasePath }}/components/AIConfig.js";
+    import AIKnowledgebase from "{{ .AppBasePath }}/components/AIKnowledgebase.js";
+    import AIChatToggle from "{{ .AppBasePath }}/components/AIChatToggle.js";
+    import AIReplyLogs from "{{ .AppBasePath }}/components/AIReplyLogs.js";
 
     const showErrorInfo = (message) => {
         $('body').toast({
@@ -277,7 +293,8 @@
             NewsletterList,
             AccountAvatar, AccountUserInfo, AccountPrivacy, AccountChangeAvatar, AccountContact, AccountChangePushName, AccountUserCheck, AccountBusinessProfile,
             ChatPinManager, ChatDisappearingManager, ChatList, ChatMessages,
-            DeviceManager
+            DeviceManager,
+            AIConfig, AIKnowledgebase, AIChatToggle, AIReplyLogs
         },
         delimiters: ['[[', ']]'],
         data() {

@@ -21,10 +21,12 @@ import (
 	domainNewsletter "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/newsletter"
 	domainSend "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/send"
 	domainUser "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/user"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/aireply"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/chatstorage"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/usecase"
+	aireplyUC "github.com/aldinokemal/go-whatsapp-web-multidevice/usecase/aireply"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sirupsen/logrus"
@@ -53,6 +55,9 @@ var (
 	groupUsecase      domainGroup.IGroupUsecase
 	newsletterUsecase domainNewsletter.INewsletterUsecase
 	deviceUsecase     domainDevice.IDeviceUsecase
+
+	// AI Reply service (nil when feature gate is off)
+	aiReplyService *aireplyUC.Service
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -172,6 +177,26 @@ func initEnvConfig() {
 	}
 	if viper.IsSet("chatwoot_days_limit_import_messages") {
 		config.ChatwootDaysLimitImportMessages = viper.GetInt("chatwoot_days_limit_import_messages")
+	}
+
+	// AI Auto-Reply settings
+	if viper.IsSet("ai_reply_enabled") {
+		config.AIReplyEnabled = viper.GetBool("ai_reply_enabled")
+	}
+	if envAIKey := viper.GetString("ai_encryption_key"); envAIKey != "" {
+		config.AIEncryptionKey = envAIKey
+	}
+	if viper.IsSet("ai_max_kb_file_size") {
+		config.AIMaxKBFileSize = viper.GetInt64("ai_max_kb_file_size")
+	}
+	if viper.IsSet("ai_request_timeout_sec") {
+		config.AIRequestTimeoutSec = viper.GetInt("ai_request_timeout_sec")
+	}
+	if viper.IsSet("ai_rate_limit_seconds") {
+		config.AIRateLimitSeconds = viper.GetInt("ai_rate_limit_seconds")
+	}
+	if viper.IsSet("ai_vector_dimension") {
+		config.AIVectorDimension = viper.GetInt("ai_vector_dimension")
 	}
 }
 
@@ -323,6 +348,44 @@ func initFlags() {
 		config.ChatwootDaysLimitImportMessages,
 		`days of message history to import to Chatwoot --chatwoot-days-limit-import-messages <int> | example: --chatwoot-days-limit-import-messages=7`,
 	)
+
+	// AI Auto-Reply flags
+	rootCmd.PersistentFlags().BoolVarP(
+		&config.AIReplyEnabled,
+		"ai-reply-enabled", "",
+		config.AIReplyEnabled,
+		`enable AI auto-reply with RAG knowledgebase --ai-reply-enabled <true/false> | example: --ai-reply-enabled=true`,
+	)
+	rootCmd.PersistentFlags().StringVarP(
+		&config.AIEncryptionKey,
+		"ai-encryption-key", "",
+		config.AIEncryptionKey,
+		`hex-encoded 32-byte key for AES-GCM encryption of stored API keys (required when ai-reply-enabled) --ai-encryption-key <string>`,
+	)
+	rootCmd.PersistentFlags().Int64VarP(
+		&config.AIMaxKBFileSize,
+		"ai-max-kb-file-size", "",
+		config.AIMaxKBFileSize,
+		`max knowledgebase upload size in bytes (default 10MB) --ai-max-kb-file-size <int>`,
+	)
+	rootCmd.PersistentFlags().IntVarP(
+		&config.AIRequestTimeoutSec,
+		"ai-request-timeout-sec", "",
+		config.AIRequestTimeoutSec,
+		`per-call timeout for LLM/embeddings requests in seconds --ai-request-timeout-sec <int>`,
+	)
+	rootCmd.PersistentFlags().IntVarP(
+		&config.AIRateLimitSeconds,
+		"ai-rate-limit-seconds", "",
+		config.AIRateLimitSeconds,
+		`min interval (seconds) between AI replies per chat --ai-rate-limit-seconds <int>`,
+	)
+	rootCmd.PersistentFlags().IntVarP(
+		&config.AIVectorDimension,
+		"ai-vector-dimension", "",
+		config.AIVectorDimension,
+		`embedding vector dimension (default 1536 for text-embedding-3-small) --ai-vector-dimension <int>`,
+	)
 }
 
 func initChatStorage() (*sql.DB, error) {
@@ -395,6 +458,20 @@ func initApp() {
 	groupUsecase = usecase.NewGroupService()
 	newsletterUsecase = usecase.NewNewsletterService()
 	deviceUsecase = usecase.NewDeviceService(dm)
+
+	// AI Reply: feature-gated. The vector store is initialised lazily on
+	// first KB upload (so deployments that never enable AI don't pay the
+	// sqlite-vec extension probe cost).
+	if config.AIReplyEnabled {
+		aiRepo := aireply.NewRepository(chatStorageDB)
+		vecStore := aireply.NewVecStore(chatStorageDB)
+		if err := vecStore.Init(config.AIVectorDimension); err != nil {
+			logrus.Warnf("AI Reply: sqlite-vec init failed (%v); feature will run without vector search until fixed", err)
+		}
+		aiReplyService = aireplyUC.NewService(aiRepo, vecStore, chatStorageRepo)
+		whatsapp.RegisterAIReplyHandler(aiReplyService)
+		logrus.Info("AI Reply feature enabled")
+	}
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

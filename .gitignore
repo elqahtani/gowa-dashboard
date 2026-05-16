@@ -1,4 +1,7 @@
 *.db
+*.db-journal
+*.db-shm
+*.db-wal
 tmp
 .idea
 .DS_Store

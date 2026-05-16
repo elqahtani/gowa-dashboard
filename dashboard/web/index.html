@@ -65,6 +65,9 @@
         <a class="item" :class="{active: tab === 'logs'}" @click="tab='logs'">
             <i class="history icon"></i> Riwayat
         </a>
+        <a class="item" :class="{active: tab === 'aireply'}" @click="openAITab">
+            <i class="robot icon"></i> AI Reply
+        </a>
     </div>
 
     <!-- ================== DEVICES TAB ================== -->
@@ -491,6 +494,316 @@
         </div>
     </div>
 
+    <!-- ================== AI REPLY TAB ================== -->
+    <div v-if="tab === 'aireply'">
+        <div class="ui top attached header">
+            <i class="robot icon"></i> AI Auto-Reply
+            <span v-if="selectedDevice" style="margin-left:8px;font-size:13px;color:#666">
+                · device: <b>{{ selectedDevice }}</b>
+            </span>
+        </div>
+        <div class="ui attached segment">
+            <div v-if="!selectedDevice" class="ui warning message">
+                <i class="warning sign icon"></i>
+                Pilih device dulu di tab <b>Devices</b> — semua setting AI di-scope per device.
+            </div>
+            <template v-else>
+                <div class="ui pointing secondary menu" style="margin-top:0">
+                    <a class="item" :class="{active: aiTab === 'config'}" @click="aiOpen('config')">
+                        <i class="cogs icon"></i> Config
+                    </a>
+                    <a class="item" :class="{active: aiTab === 'kb'}" @click="aiOpen('kb')">
+                        <i class="book icon"></i> Knowledgebase
+                        <span v-if="aiDocs.length" class="ui circular mini label">{{ aiDocs.length }}</span>
+                    </a>
+                    <a class="item" :class="{active: aiTab === 'chats'}" @click="aiOpen('chats')">
+                        <i class="comment alternate icon"></i> Chat Toggle
+                        <span v-if="aiChatSettings.length" class="ui circular mini label">{{ aiChatSettings.length }}</span>
+                    </a>
+                    <a class="item" :class="{active: aiTab === 'logs'}" @click="aiOpen('logs')">
+                        <i class="clipboard list icon"></i> Logs
+                    </a>
+                </div>
+
+                <!-- ===== CONFIG SUB-TAB ===== -->
+                <div v-if="aiTab === 'config'">
+                    <div v-if="aiConfigLoading" class="ui active centered inline loader"></div>
+                    <form v-else class="ui form" @submit.prevent="aiSaveConfig">
+                        <div class="two fields">
+                            <div class="field">
+                                <label>Provider</label>
+                                <select class="ui dropdown" v-model="aiConfig.provider">
+                                    <option value="openai_compatible">OpenAI-compatible (OpenRouter / DeepSeek / Groq / Ollama / OpenAI)</option>
+                                    <option value="anthropic">Anthropic (Claude)</option>
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label>Model</label>
+                                <input type="text" v-model="aiConfig.model" placeholder="e.g. claude-sonnet-4-6 atau openai/gpt-4o-mini">
+                            </div>
+                        </div>
+                        <div class="two fields">
+                            <div class="field">
+                                <label>
+                                    API Key
+                                    <span v-if="aiKeyMasked" style="font-weight:normal;color:#21ba45;font-size:11px">
+                                        — tersimpan: {{ aiKeyMasked }} (kosongkan untuk pertahankan)
+                                    </span>
+                                </label>
+                                <input type="password" v-model="aiConfig.api_key"
+                                       :placeholder="aiKeyMasked ? '(key tersimpan, isi hanya jika mau ganti)' : 'sk-...'">
+                            </div>
+                            <div class="field">
+                                <label>Base URL (optional, openai-compatible)</label>
+                                <input type="text" v-model="aiConfig.base_url" placeholder="https://openrouter.ai/api/v1">
+                            </div>
+                        </div>
+                        <div v-if="aiConfig.provider === 'anthropic'" class="ui yellow message">
+                            <i class="info circle icon"></i>
+                            Anthropic tidak punya endpoint embeddings. Isi <b>Embed Provider</b> di bawah pakai OpenAI-compatible (mis. text-embedding-3-small).
+                        </div>
+                        <details style="margin:10px 0">
+                            <summary style="cursor:pointer;color:#2185d0;font-weight:bold">Embeddings (advanced)</summary>
+                            <div style="padding:12px 4px">
+                                <div class="two fields">
+                                    <div class="field">
+                                        <label>Embed Provider</label>
+                                        <select class="ui dropdown" v-model="aiConfig.embed_provider">
+                                            <option value="">(pakai chat provider kalau openai-compatible)</option>
+                                            <option value="openai_compatible">openai_compatible</option>
+                                        </select>
+                                    </div>
+                                    <div class="field">
+                                        <label>Embed Model</label>
+                                        <input type="text" v-model="aiConfig.embed_model" placeholder="text-embedding-3-small">
+                                    </div>
+                                </div>
+                                <div class="two fields">
+                                    <div class="field">
+                                        <label>
+                                            Embed API Key (kalau beda)
+                                            <span v-if="aiEmbedKeyMasked" style="font-weight:normal;color:#21ba45;font-size:11px">
+                                                — tersimpan: {{ aiEmbedKeyMasked }}
+                                            </span>
+                                        </label>
+                                        <input type="password" v-model="aiConfig.embed_api_key"
+                                               :placeholder="aiEmbedKeyMasked ? '(tersimpan, isi hanya jika ganti)' : ''">
+                                    </div>
+                                    <div class="field">
+                                        <label>Embed Base URL</label>
+                                        <input type="text" v-model="aiConfig.embed_base_url">
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+                        <div class="field">
+                            <label>Style Preset</label>
+                            <select class="ui dropdown" v-model="aiConfig.style_preset">
+                                <option value="customer_service_formal">Customer Service (formal)</option>
+                                <option value="sales_casual">Sales (casual)</option>
+                                <option value="technical_support">Technical Support</option>
+                                <option value="custom">Custom (tulis prompt sendiri)</option>
+                            </select>
+                        </div>
+                        <div class="field" v-if="aiConfig.style_preset === 'custom'">
+                            <label>Custom System Prompt</label>
+                            <textarea rows="4" v-model="aiConfig.system_prompt"
+                                      placeholder="Instruksi: persona, bahasa, tone, format..."></textarea>
+                        </div>
+                        <div class="four fields">
+                            <div class="field">
+                                <label>Max Tokens</label>
+                                <input type="number" v-model.number="aiConfig.max_tokens" min="1" max="8000">
+                            </div>
+                            <div class="field">
+                                <label>Temperature</label>
+                                <input type="number" step="0.05" v-model.number="aiConfig.temperature" min="0" max="2">
+                            </div>
+                            <div class="field">
+                                <label>Top K</label>
+                                <input type="number" v-model.number="aiConfig.top_k" min="1" max="20">
+                            </div>
+                            <div class="field">
+                                <label>Threshold (0–1)</label>
+                                <input type="number" step="0.05" v-model.number="aiConfig.retrieval_threshold" min="0" max="1">
+                            </div>
+                        </div>
+                        <div class="field">
+                            <div class="ui toggle checkbox">
+                                <input type="checkbox" v-model="aiConfig.guardrail_enabled" id="ai-guardrail">
+                                <label for="ai-guardrail">Aktifkan guardrail (tolak pertanyaan di luar knowledgebase)</label>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label>Pesan out-of-scope</label>
+                            <input type="text" v-model="aiConfig.out_of_scope_message">
+                        </div>
+                        <div v-if="aiTestResult" :class="['ui', aiTestResult.ok ? 'green' : 'red', 'message']">
+                            <div class="header">Test {{ aiTestResult.ok ? 'OK' : 'gagal' }}</div>
+                            <p v-if="aiTestResult.latency">Latency: <b>{{ aiTestResult.latency }}ms</b></p>
+                            <pre style="white-space:pre-wrap;margin:0;font-size:12px">{{ aiTestResult.body }}</pre>
+                        </div>
+                        <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                            <div class="ui buttons">
+                                <button type="button" class="ui button" :class="{loading: aiTesting}" @click="aiTestConfig">
+                                    <i class="plug icon"></i> Test Connection
+                                </button>
+                                <div class="or"></div>
+                                <button type="submit" class="ui primary button" :class="{loading: aiSaving}">
+                                    <i class="save icon"></i> Simpan
+                                </button>
+                            </div>
+                            <button type="button" class="ui basic button" @click="aiConfigLoaded = false; aiLoadConfig()" title="Reload dari server (buang edit yang belum disimpan)">
+                                <i class="sync icon"></i> Reload dari server
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- ===== KNOWLEDGEBASE SUB-TAB ===== -->
+                <div v-if="aiTab === 'kb'">
+                    <div class="ui form">
+                        <div class="field">
+                            <label>Upload dokumen (PDF, DOCX, TXT, MD — max 10MB)</label>
+                            <input type="file" ref="aiFileInput" accept=".pdf,.docx,.txt,.md" @change="aiOnFile">
+                        </div>
+                        <button class="ui primary button" :class="{loading: aiUploading}" :disabled="!aiUploadFile" @click="aiUploadDoc">
+                            <i class="upload icon"></i> Upload
+                        </button>
+                        <button class="ui button" :class="{loading: aiReindexing}" @click="aiReindex">
+                            <i class="redo icon"></i> Re-index semua
+                        </button>
+                        <button class="ui button" @click="aiListDocs"><i class="refresh icon"></i> Refresh</button>
+                    </div>
+                    <div class="ui divider"></div>
+                    <div v-if="aiDocsLoading" class="ui active centered inline loader"></div>
+                    <table v-else class="ui celled table">
+                        <thead><tr><th>Filename</th><th>Size</th><th>Chunks</th><th>Status</th><th>Dibuat</th><th></th></tr></thead>
+                        <tbody>
+                            <tr v-if="!aiDocs.length"><td colspan="6" style="text-align:center;color:#999">Belum ada dokumen.</td></tr>
+                            <tr v-for="d in aiDocs" :key="d.id">
+                                <td>{{ d.filename }}</td>
+                                <td>{{ aiFmtSize(d.file_size) }}</td>
+                                <td>{{ d.chunk_count }}</td>
+                                <td>
+                                    <span :class="['ui mini', aiDocStatusColor(d.status), 'label']">{{ d.status }}</span>
+                                    <div v-if="d.error_message" style="color:#c62828;font-size:11px;margin-top:4px">{{ d.error_message }}</div>
+                                </td>
+                                <td>{{ formatTime(d.created_at) }}</td>
+                                <td><button class="ui mini red button" @click="aiDeleteDoc(d.id)"><i class="trash icon"></i></button></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- ===== CHAT TOGGLE SUB-TAB ===== -->
+                <div v-if="aiTab === 'chats'">
+                    <div class="ui form">
+                        <div class="two fields">
+                            <div class="field">
+                                <label>Tambah nomor / chat JID</label>
+                                <input type="text" v-model="aiNewChatJid" placeholder="6289605618749 atau 08xxx atau xxxxx@g.us">
+                                <small style="color:#888">Cukup nomor (62xxx / 08xxx) — auto-format jadi @s.whatsapp.net. Untuk grup, isi JID lengkap (xxxxx@g.us).</small>
+                            </div>
+                            <div class="field">
+                                <label>&nbsp;</label>
+                                <div class="ui toggle checkbox">
+                                    <input type="checkbox" v-model="aiNewChatEnabled" id="ai-new-enabled">
+                                    <label for="ai-new-enabled">Enabled</label>
+                                </div>
+                            </div>
+                        </div>
+                        <button class="ui primary button" :class="{loading: aiChatSaving}" @click="aiAddChat">
+                            <i class="plus icon"></i> Simpan
+                        </button>
+                        <button class="ui button" @click="aiListChats"><i class="refresh icon"></i> Refresh</button>
+                    </div>
+                    <div class="ui divider"></div>
+                    <div v-if="aiChatLoading" class="ui active centered inline loader"></div>
+                    <table v-else class="ui celled table">
+                        <thead><tr><th>Chat JID</th><th>Status</th><th>Diupdate</th><th></th></tr></thead>
+                        <tbody>
+                            <tr v-if="!aiChatSettings.length"><td colspan="4" style="text-align:center;color:#999">Belum ada setting per-chat.</td></tr>
+                            <tr v-for="s in aiChatSettings" :key="s.chat_jid">
+                                <td><code>{{ s.chat_jid }}</code></td>
+                                <td>
+                                    <span :class="['ui mini', s.enabled ? 'green' : 'grey', 'label']">
+                                        {{ s.enabled ? 'ON' : 'OFF' }}
+                                    </span>
+                                </td>
+                                <td>{{ formatTime(s.updated_at) }}</td>
+                                <td>
+                                    <button class="ui mini button" @click="aiToggleChat(s)">
+                                        {{ s.enabled ? 'Disable' : 'Enable' }}
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- ===== LOGS SUB-TAB ===== -->
+                <div v-if="aiTab === 'logs'">
+                    <div class="ui form">
+                        <div class="three fields">
+                            <div class="field">
+                                <label>Chat JID</label>
+                                <input type="text" v-model="aiLogFilter.chat_jid" placeholder="(semua)">
+                            </div>
+                            <div class="field">
+                                <label>Status</label>
+                                <select class="ui dropdown" v-model="aiLogFilter.status">
+                                    <option value="">(semua)</option>
+                                    <option value="success">success</option>
+                                    <option value="out_of_scope">out_of_scope</option>
+                                    <option value="error">error</option>
+                                    <option value="rate_limited">rate_limited</option>
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label>Limit</label>
+                                <input type="number" v-model.number="aiLogFilter.limit" min="1" max="500">
+                            </div>
+                        </div>
+                        <button class="ui primary button" :class="{loading: aiLogsLoading}" @click="aiListLogs">
+                            <i class="search icon"></i> Filter
+                        </button>
+                    </div>
+                    <div class="ui divider"></div>
+                    <div v-if="aiLogsLoading" class="ui active centered inline loader"></div>
+                    <table v-else class="ui celled striped compact table">
+                        <thead>
+                            <tr><th>Waktu</th><th>Chat</th><th>Status</th><th>Query</th><th>Response</th><th>Latency</th><th>In/Out</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            <tr v-if="!aiLogs.length"><td colspan="8" style="text-align:center;color:#999">Belum ada log AI reply.</td></tr>
+                            <template v-for="l in aiLogs" :key="l.id">
+                                <tr>
+                                    <td><small>{{ formatTime(l.created_at) }}</small></td>
+                                    <td><code style="font-size:11px">{{ (l.chat_jid || '').slice(0, 22) }}</code></td>
+                                    <td><span :class="['ui mini', aiLogStatusColor(l.status), 'label']">{{ l.status }}</span></td>
+                                    <td><small>{{ (l.query || '').slice(0, 60) }}{{ (l.query || '').length > 60 ? '…' : '' }}</small></td>
+                                    <td><small>{{ (l.response || '').slice(0, 60) }}{{ (l.response || '').length > 60 ? '…' : '' }}</small></td>
+                                    <td>{{ l.latency_ms }}ms</td>
+                                    <td>{{ l.tokens_in }}/{{ l.tokens_out }}</td>
+                                    <td><button class="ui mini button" @click="aiExpandedLog = aiExpandedLog === l.id ? null : l.id">{{ aiExpandedLog === l.id ? 'Tutup' : 'Detail' }}</button></td>
+                                </tr>
+                                <tr v-if="aiExpandedLog === l.id">
+                                    <td colspan="8" style="background:#fafafa">
+                                        <div style="margin-bottom:6px"><b>Query:</b><pre style="white-space:pre-wrap;margin:4px 0">{{ l.query }}</pre></div>
+                                        <div style="margin-bottom:6px"><b>Response:</b><pre style="white-space:pre-wrap;margin:4px 0">{{ l.response }}</pre></div>
+                                        <div v-if="l.retrieved_chunk_ids"><b>Retrieved Chunk IDs:</b> <code>{{ l.retrieved_chunk_ids }}</code></div>
+                                        <div v-if="l.error_message" style="color:#c62828;margin-top:6px"><b>Error:</b> {{ l.error_message }}</div>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </template>
+        </div>
+    </div>
+
     <!-- ================== LOGS MODAL ================== -->
     <div class="ui modal" id="logs-modal">
         <i class="close icon"></i>
@@ -541,6 +854,30 @@ createApp({
             loginFor: this.freshLoginState(),
             loginPollTimer: null,
             qrCountdownTimer: null,
+            // --- AI Reply state ---
+            aiTab: 'config',
+            aiConfig: this.freshAIConfig(),
+            aiConfigLoading: false,
+            aiConfigLoaded: false,
+            aiKeyMasked: '',
+            aiEmbedKeyMasked: '',
+            aiSaving: false,
+            aiTesting: false,
+            aiTestResult: null,
+            aiDocs: [],
+            aiDocsLoading: false,
+            aiUploadFile: null,
+            aiUploading: false,
+            aiReindexing: false,
+            aiChatSettings: [],
+            aiChatLoading: false,
+            aiChatSaving: false,
+            aiNewChatJid: '',
+            aiNewChatEnabled: true,
+            aiLogs: [],
+            aiLogsLoading: false,
+            aiLogFilter: { chat_jid: '', status: '', limit: 50 },
+            aiExpandedLog: null,
         };
     },
     watch: {
@@ -548,6 +885,14 @@ createApp({
             localStorage.setItem('selectedDevice', v || '');
             this.sendForm.device_id = v;
             this.editor.device_id = v;
+            // Device berganti -> reset AI state, force reload pada visit berikutnya.
+            this.aiConfigLoaded = false;
+            this.aiConfig = this.freshAIConfig();
+            this.aiKeyMasked = '';
+            this.aiEmbedKeyMasked = '';
+            this.aiDocs = [];
+            this.aiChatSettings = [];
+            this.aiLogs = [];
         },
     },
     mounted() {
@@ -566,6 +911,29 @@ createApp({
         },
         freshLoginState() {
             return { device_id: '', status: 'idle', qr_link: '', qr_duration: 60, countdown: 60, pair_code: '', statusText: '', error: '' };
+        },
+        freshAIConfig() {
+            return {
+                provider: 'openai_compatible',
+                model: '',
+                api_key: '',
+                base_url: '',
+                embed_provider: '',
+                embed_model: '',
+                embed_api_key: '',
+                embed_base_url: '',
+                system_prompt: '',
+                style_preset: 'customer_service_formal',
+                max_tokens: 500,
+                temperature: 0.3,
+                top_k: 4,
+                retrieval_threshold: 0.3,
+                guardrail_enabled: true,
+                out_of_scope_message: 'Maaf, saya hanya bisa bantu seputar topik yang ada di knowledgebase kami.',
+            };
+        },
+        aiHeaders() {
+            return { headers: { 'X-Device-Id': this.selectedDevice } };
         },
         freshEditor() {
             return { id: 0, name: '', device_id: this.selectedDevice || '', recipient: '', message_type: 'text', message: '', media_url: '', caption: '', latitude: '', longitude: '', link_url: '', schedule_type: 'once', run_at: '', cron_expr: '', timezone: 'Asia/Jakarta', enabled: true };
@@ -853,6 +1221,207 @@ createApp({
             if (!iso) return '—';
             try { return new Date(iso).toLocaleString('id-ID', { hour12: false }); }
             catch (e) { return iso; }
+        },
+        // --- AI Reply methods --------------------------------------------
+        openAITab() {
+            this.tab = 'aireply';
+            if (this.selectedDevice) this.aiOpen(this.aiTab || 'config');
+            this.$nextTick(() => $('.ui.dropdown').dropdown());
+        },
+        aiOpen(sub) {
+            this.aiTab = sub;
+            this.aiTestResult = null;
+            if (!this.selectedDevice) return;
+            // Load config sekali per sesi (tidak setiap switch sub-tab) supaya edit
+            // yang belum disimpan tidak hilang saat user pindah ke Knowledgebase dll.
+            if (sub === 'config' && !this.aiConfigLoaded) this.aiLoadConfig();
+            else if (sub === 'kb') this.aiListDocs();
+            else if (sub === 'chats') this.aiListChats();
+            else if (sub === 'logs') this.aiListLogs();
+            this.$nextTick(() => $('.ui.dropdown').dropdown());
+        },
+        async aiLoadConfig() {
+            this.aiConfigLoading = true;
+            this.aiTestResult = null;
+            try {
+                const r = await axios.get('/api/aireply/config', this.aiHeaders());
+                const res = r.data.results;
+                this.aiConfig = Object.assign(this.freshAIConfig(), res || {});
+                // Backend mengirim API key dalam bentuk masked ("sk-v****Aw5A").
+                // Pisahkan ke field display-only, biarkan input kosong supaya:
+                //   (a) tidak ada risiko user re-save masked string sebagai key asli
+                //   (b) field kosong saat save = core mempertahankan key tersimpan
+                this.aiKeyMasked = (res && res.api_key) || '';
+                this.aiEmbedKeyMasked = (res && res.embed_api_key) || '';
+                this.aiConfig.api_key = '';
+                this.aiConfig.embed_api_key = '';
+                this.aiConfigLoaded = true;
+            } catch (e) {
+                if (e.response && e.response.status !== 404) {
+                    alert('Gagal load AI config: ' + (e.response?.data?.error || e.message));
+                }
+                this.aiConfig = this.freshAIConfig();
+            } finally {
+                this.aiConfigLoading = false;
+                this.$nextTick(() => $('.ui.dropdown').dropdown());
+            }
+        },
+        async aiSaveConfig() {
+            this.aiSaving = true;
+            try {
+                await axios.put('/api/aireply/config', this.aiConfig, this.aiHeaders());
+                alert('Config AI tersimpan.');
+                // Reload supaya masked-key display ter-update kalau user baru saja
+                // mengisi key baru.
+                this.aiConfigLoaded = false;
+                await this.aiLoadConfig();
+            } catch (e) {
+                alert('Gagal simpan: ' + (e.response?.data?.error || e.response?.data?.upstream?.message || e.message));
+            } finally {
+                this.aiSaving = false;
+            }
+        },
+        async aiTestConfig() {
+            this.aiTesting = true;
+            this.aiTestResult = null;
+            try {
+                const r = await axios.post('/api/aireply/config/test', null, this.aiHeaders());
+                const res = r.data.results || {};
+                this.aiTestResult = { ok: true, latency: res.latency_ms, body: res.model_response };
+            } catch (e) {
+                this.aiTestResult = { ok: false, body: e.response?.data?.error || e.response?.data?.upstream?.message || e.message };
+            } finally {
+                this.aiTesting = false;
+            }
+        },
+        aiOnFile(ev) {
+            this.aiUploadFile = ev.target.files[0] || null;
+        },
+        async aiUploadDoc() {
+            if (!this.aiUploadFile) return;
+            this.aiUploading = true;
+            try {
+                const fd = new FormData();
+                fd.append('file', this.aiUploadFile);
+                await axios.post('/api/aireply/documents', fd, {
+                    headers: { 'X-Device-Id': this.selectedDevice, 'Content-Type': 'multipart/form-data' }
+                });
+                this.aiUploadFile = null;
+                if (this.$refs.aiFileInput) this.$refs.aiFileInput.value = '';
+                await this.aiListDocs();
+            } catch (e) {
+                alert('Upload gagal: ' + (e.response?.data?.error || e.message));
+            } finally {
+                this.aiUploading = false;
+            }
+        },
+        async aiListDocs() {
+            this.aiDocsLoading = true;
+            try {
+                const r = await axios.get('/api/aireply/documents', this.aiHeaders());
+                this.aiDocs = r.data.results || [];
+            } catch (e) {
+                this.aiDocs = [];
+            } finally {
+                this.aiDocsLoading = false;
+            }
+        },
+        async aiDeleteDoc(id) {
+            if (!confirm('Hapus dokumen ini beserta semua chunk-nya?')) return;
+            try {
+                await axios.delete('/api/aireply/documents/' + encodeURIComponent(id), this.aiHeaders());
+                await this.aiListDocs();
+            } catch (e) {
+                alert('Hapus gagal: ' + (e.response?.data?.error || e.message));
+            }
+        },
+        async aiReindex() {
+            if (!confirm('Re-embed semua chunk untuk device ini? (perlu setelah ganti embed model)')) return;
+            this.aiReindexing = true;
+            try {
+                await axios.post('/api/aireply/documents/reindex', null, this.aiHeaders());
+                await this.aiListDocs();
+            } catch (e) {
+                alert('Reindex gagal: ' + (e.response?.data?.error || e.message));
+            } finally {
+                this.aiReindexing = false;
+            }
+        },
+        async aiListChats() {
+            this.aiChatLoading = true;
+            try {
+                const r = await axios.get('/api/aireply/chat-settings', this.aiHeaders());
+                this.aiChatSettings = r.data.results || [];
+            } catch (e) {
+                this.aiChatSettings = [];
+            } finally {
+                this.aiChatLoading = false;
+            }
+        },
+        async aiSetChat(jid, enabled) {
+            this.aiChatSaving = true;
+            try {
+                await axios.put('/api/aireply/chat-settings/' + encodeURIComponent(jid), { enabled }, this.aiHeaders());
+            } catch (e) {
+                alert('Gagal: ' + (e.response?.data?.error || e.message));
+            } finally {
+                this.aiChatSaving = false;
+            }
+        },
+        aiNormalizeChatJid(raw) {
+            const s = (raw || '').trim();
+            if (!s) return '';
+            // Sudah JID lengkap (DM atau grup) — pakai apa adanya.
+            if (s.includes('@')) return s;
+            // Cuma digits = nomor telepon → DM. Append @s.whatsapp.net.
+            if (/^\d{8,15}$/.test(s)) return s + '@s.whatsapp.net';
+            // Format lain (mis. 08xxx, +62xxx) → buang non-digit lalu normalisasi 0 → 62.
+            let digits = s.replace(/\D/g, '');
+            if (digits.startsWith('0')) digits = '62' + digits.slice(1);
+            if (/^\d{8,15}$/.test(digits)) return digits + '@s.whatsapp.net';
+            return s; // biar backend yang reject — kasih feedback jelas
+        },
+        async aiAddChat() {
+            const jid = this.aiNormalizeChatJid(this.aiNewChatJid);
+            if (!jid) { alert('Isi nomor atau chat JID'); return; }
+            if (!jid.includes('@')) {
+                alert('Format tidak valid. Contoh: 6289605618749 atau 6289605618749@s.whatsapp.net atau xxxxx@g.us');
+                return;
+            }
+            await this.aiSetChat(jid, this.aiNewChatEnabled);
+            this.aiNewChatJid = '';
+            await this.aiListChats();
+        },
+        async aiToggleChat(s) {
+            await this.aiSetChat(s.chat_jid, !s.enabled);
+            await this.aiListChats();
+        },
+        async aiListLogs() {
+            this.aiLogsLoading = true;
+            try {
+                const params = {};
+                if (this.aiLogFilter.chat_jid) params.chat_jid = this.aiLogFilter.chat_jid;
+                if (this.aiLogFilter.status) params.status = this.aiLogFilter.status;
+                if (this.aiLogFilter.limit) params.limit = this.aiLogFilter.limit;
+                const r = await axios.get('/api/aireply/logs', { ...this.aiHeaders(), params });
+                this.aiLogs = r.data.results || [];
+            } catch (e) {
+                this.aiLogs = [];
+            } finally {
+                this.aiLogsLoading = false;
+            }
+        },
+        aiDocStatusColor(s) {
+            return { ready: 'green', processing: 'blue', failed: 'red' }[s] || 'grey';
+        },
+        aiLogStatusColor(s) {
+            return { success: 'green', out_of_scope: 'yellow', error: 'red', rate_limited: 'orange' }[s] || 'grey';
+        },
+        aiFmtSize(b) {
+            if (b == null) return '—';
+            if (b < 1024) return b + ' B';
+            if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+            return (b / 1024 / 1024).toFixed(1) + ' MB';
         },
     },
 }).mount('#app');

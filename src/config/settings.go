@@ -59,4 +59,12 @@ var (
 	// Chatwoot History Sync settings
 	ChatwootImportMessages          = false // Enable message history import to Chatwoot
 	ChatwootDaysLimitImportMessages = 3     // Days of history to import (default: 3)
+
+	// AI Auto-Reply (RAG) settings
+	AIReplyEnabled         = false        // Global feature gate
+	AIEncryptionKey        = ""           // Hex-encoded 32-byte key for AES-GCM at-rest encryption of provider API keys
+	AIMaxKBFileSize        int64  = 10485760 // 10MB max upload size for KB documents (PDF/TXT/DOCX)
+	AIRequestTimeoutSec    = 10           // Per-call timeout for LLM/embeddings requests
+	AIRateLimitSeconds     = 3            // Min interval (seconds) between AI replies per chat
+	AIVectorDimension      = 1536         // Embedding dimension (default: text-embedding-3-small)
 )

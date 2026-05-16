@@ -296,3 +296,119 @@ func mediaEndpoint(kind string) (endpoint, urlField string) {
 	}
 	return "", ""
 }
+
+// --- AI Auto-Reply --------------------------------------------------------
+// All endpoints are device-scoped via X-Device-Id header. The dashboard
+// proxies these 1:1 so the dashboard UI can be the single control plane.
+
+func (c *Client) GetAIConfig(deviceID string) (*Response, error) {
+	req, err := http.NewRequest(http.MethodGet, c.BaseURL+"/aireply/config", nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.do(req, deviceID)
+}
+
+// SaveAIConfig accepts the raw JSON body so the dashboard handler can pass
+// the user form through without re-marshalling (keeps schema drift in core).
+func (c *Client) SaveAIConfig(deviceID string, body []byte) (*Response, error) {
+	req, err := http.NewRequest(http.MethodPut, c.BaseURL+"/aireply/config", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return c.do(req, deviceID)
+}
+
+func (c *Client) TestAIConfig(deviceID string) (*Response, error) {
+	req, err := http.NewRequest(http.MethodPost, c.BaseURL+"/aireply/config/test", nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.do(req, deviceID)
+}
+
+// UploadAIDocument streams the original multipart body straight to upstream
+// so we don't re-parse the file (which could be up to AI_MAX_KB_FILE_SIZE,
+// default 10MB). Caller passes the raw body reader + its Content-Type.
+func (c *Client) UploadAIDocument(deviceID string, body io.Reader, contentType string) (*Response, error) {
+	req, err := http.NewRequest(http.MethodPost, c.BaseURL+"/aireply/documents", body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	return c.do(req, deviceID)
+}
+
+func (c *Client) ListAIDocuments(deviceID string) (*Response, error) {
+	req, err := http.NewRequest(http.MethodGet, c.BaseURL+"/aireply/documents", nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.do(req, deviceID)
+}
+
+func (c *Client) DeleteAIDocument(deviceID, id string) (*Response, error) {
+	u := fmt.Sprintf("%s/aireply/documents/%s", c.BaseURL, url.PathEscape(id))
+	req, err := http.NewRequest(http.MethodDelete, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.do(req, deviceID)
+}
+
+func (c *Client) ReindexAIDocuments(deviceID string) (*Response, error) {
+	req, err := http.NewRequest(http.MethodPost, c.BaseURL+"/aireply/documents/reindex", nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.do(req, deviceID)
+}
+
+func (c *Client) ListAIChatSettings(deviceID string) (*Response, error) {
+	req, err := http.NewRequest(http.MethodGet, c.BaseURL+"/aireply/chat-settings", nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.do(req, deviceID)
+}
+
+func (c *Client) SetAIChatEnabled(deviceID, chatJID string, enabled bool) (*Response, error) {
+	body, err := json.Marshal(map[string]bool{"enabled": enabled})
+	if err != nil {
+		return nil, err
+	}
+	// Core (Fiber 2.52) does not URL-decode :chat_jid in c.Params(), so a
+	// percent-encoded "@" (%40) reaches the JID validator and is rejected
+	// with "missing server". WhatsApp JIDs only contain digits, "@", and
+	// "." (and ":" for AD-suffixed), all safe to embed raw in a path.
+	u := fmt.Sprintf("%s/aireply/chat-settings/%s", c.BaseURL, strings.ReplaceAll(url.PathEscape(chatJID), "%40", "@"))
+	req, err := http.NewRequest(http.MethodPut, u, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return c.do(req, deviceID)
+}
+
+func (c *Client) ListAILogs(deviceID, chatJID, status string, limit int) (*Response, error) {
+	q := url.Values{}
+	if chatJID != "" {
+		q.Set("chat_jid", chatJID)
+	}
+	if status != "" {
+		q.Set("status", status)
+	}
+	if limit > 0 {
+		q.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	u := c.BaseURL + "/aireply/logs"
+	if enc := q.Encode(); enc != "" {
+		u += "?" + enc
+	}
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.do(req, deviceID)
+}
