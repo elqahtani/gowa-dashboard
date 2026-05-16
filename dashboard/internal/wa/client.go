@@ -68,13 +68,16 @@ func (c *Client) do(req *http.Request, deviceID string) (*Response, error) {
 	return &env, nil
 }
 
-// ListDevices proxies GET /app/devices.
-func (c *Client) ListDevices() (*Response, error) {
+// ListDevices proxies GET /app/devices. Core's device middleware requires
+// X-Device-Id once there are 2+ devices (single-device mode auto-picks).
+// Forward whatever the caller passes so the dashboard can use its
+// currently-selected device as the auth context.
+func (c *Client) ListDevices(deviceID string) (*Response, error) {
 	req, err := http.NewRequest(http.MethodGet, c.BaseURL+"/app/devices", nil)
 	if err != nil {
 		return nil, err
 	}
-	return c.do(req, "")
+	return c.do(req, deviceID)
 }
 
 // Status proxies GET /devices/:id/status (multi-device) or /app/status (single).
@@ -95,8 +98,11 @@ func (c *Client) DeviceStatus(deviceID string) (*Response, error) {
 // --- Device management ----------------------------------------------------
 
 // CreateDevice proxies POST /devices with {"device_id": "<name>"}.
-func (c *Client) CreateDevice(deviceID string) (*Response, error) {
-	body, err := json.Marshal(map[string]string{"device_id": deviceID})
+// authDeviceID is the X-Device-Id to send for middleware auth (typically the
+// currently-selected device). Required when 2+ devices already exist;
+// safe to pass empty when bootstrapping the first device.
+func (c *Client) CreateDevice(newDeviceID, authDeviceID string) (*Response, error) {
+	body, err := json.Marshal(map[string]string{"device_id": newDeviceID})
 	if err != nil {
 		return nil, err
 	}
@@ -105,17 +111,18 @@ func (c *Client) CreateDevice(deviceID string) (*Response, error) {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	return c.do(req, "")
+	return c.do(req, authDeviceID)
 }
 
-// DeleteDevice proxies DELETE /devices/:id.
+// DeleteDevice proxies DELETE /devices/:id. Sends the same id as
+// X-Device-Id (the device being deleted exists; middleware passes).
 func (c *Client) DeleteDevice(deviceID string) (*Response, error) {
 	u := fmt.Sprintf("%s/devices/%s", c.BaseURL, url.PathEscape(deviceID))
 	req, err := http.NewRequest(http.MethodDelete, u, nil)
 	if err != nil {
 		return nil, err
 	}
-	return c.do(req, "")
+	return c.do(req, deviceID)
 }
 
 // Login proxies GET /app/login with X-Device-Id header. Returns the response

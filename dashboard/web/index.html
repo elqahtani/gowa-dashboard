@@ -498,14 +498,29 @@
     <div v-if="tab === 'aireply'">
         <div class="ui top attached header">
             <i class="robot icon"></i> AI Auto-Reply
-            <span v-if="selectedDevice" style="margin-left:8px;font-size:13px;color:#666">
-                · device: <b>{{ selectedDevice }}</b>
-            </span>
         </div>
         <div class="ui attached segment">
+            <div class="ui form" style="margin-bottom:14px">
+                <div class="inline field">
+                    <label style="min-width:80px"><i class="mobile alternate icon"></i> Device:</label>
+                    <select class="ui dropdown" v-model="selectedDevice" style="min-width:220px">
+                        <option value="">— pilih device —</option>
+                        <option v-for="d in devices" :key="d.device || d.id" :value="d.device || d.id">
+                            {{ d.device || d.id }}{{ d.name ? ' · ' + d.name : '' }}{{ d.is_logged_in === false ? ' (logged out)' : '' }}
+                        </option>
+                    </select>
+                    <button class="ui mini basic button" @click="loadDevices" title="Refresh daftar device" style="margin-left:8px">
+                        <i class="refresh icon"></i>
+                    </button>
+                    <span style="margin-left:14px;font-size:12px;color:#888">
+                        Setting AI per-device (config, KB, chat toggle, logs di-scope independen).
+                    </span>
+                </div>
+            </div>
+
             <div v-if="!selectedDevice" class="ui warning message">
                 <i class="warning sign icon"></i>
-                Pilih device dulu di tab <b>Devices</b> — semua setting AI di-scope per device.
+                Pilih device di dropdown di atas — atau buka tab <b>Devices</b> untuk tambah/login device baru.
             </div>
             <template v-else>
                 <div class="ui pointing secondary menu" style="margin-top:0">
@@ -885,7 +900,7 @@ createApp({
             localStorage.setItem('selectedDevice', v || '');
             this.sendForm.device_id = v;
             this.editor.device_id = v;
-            // Device berganti -> reset AI state, force reload pada visit berikutnya.
+            // Device berganti -> reset AI state.
             this.aiConfigLoaded = false;
             this.aiConfig = this.freshAIConfig();
             this.aiKeyMasked = '';
@@ -893,6 +908,12 @@ createApp({
             this.aiDocs = [];
             this.aiChatSettings = [];
             this.aiLogs = [];
+            this.aiTestResult = null;
+            // Kalau user sedang di tab AI Reply, langsung re-load data untuk
+            // device baru supaya tidak perlu klik sub-tab manual.
+            if (this.tab === 'aireply' && v) {
+                this.$nextTick(() => this.aiOpen(this.aiTab || 'config'));
+            }
         },
     },
     mounted() {
@@ -941,13 +962,31 @@ createApp({
         async loadDevices() {
             this.devicesLoading = true;
             try {
-                const r = await axios.get('/api/devices');
+                // Core's middleware requires X-Device-Id when 2+ devices exist
+                // (single-device mode auto-picks). Forward whatever we last
+                // selected; first-time users with no device yet just get empty
+                // list and use "Tambah Device" button.
+                const headers = this.selectedDevice ? { 'X-Device-Id': this.selectedDevice } : {};
+                const r = await axios.get('/api/devices', { headers });
                 const env = r.data;
                 this.upstreamOk = true;
                 this.upstreamUrl = env.upstream_url || this.upstreamUrl;
                 const results = (env.results || env);
                 this.devices = Array.isArray(results) ? results : (results.data || []);
             } catch (e) {
+                // 400 here usually means: 2+ devices but selectedDevice points
+                // at a stale id. Reset and retry once without header so the
+                // first registered device can serve as default.
+                if (e.response && e.response.status >= 400 && this.selectedDevice) {
+                    try {
+                        const r = await axios.get('/api/devices');
+                        const env = r.data;
+                        this.upstreamOk = true;
+                        const results = (env.results || env);
+                        this.devices = Array.isArray(results) ? results : (results.data || []);
+                        return;
+                    } catch (_) { /* fall through */ }
+                }
                 this.upstreamOk = false;
                 this.devices = [];
                 console.error(e);
@@ -977,8 +1016,13 @@ createApp({
             }
             this.addDevice.loading = true;
             try {
-                // 1) Create device on the core
-                await axios.post('/api/devices', { device_id: name });
+                // 1) Create device on the core. When 2+ devices already
+                //    exist, core requires X-Device-Id of an existing one
+                //    to authorise the call; on first-device bootstrap the
+                //    header is empty and upstream's single-device default
+                //    handles it.
+                const headers = this.selectedDevice ? { 'X-Device-Id': this.selectedDevice } : {};
+                await axios.post('/api/devices', { device_id: name }, { headers });
                 // 2) Close add modal, open login modal
                 this.closeAddDevice();
                 await this.loadDevices();

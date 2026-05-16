@@ -110,7 +110,14 @@ func (h *Handlers) health(c *fiber.Ctx) error {
 }
 
 func (h *Handlers) listDevices(c *fiber.Ctx) error {
-	resp, err := h.WA.ListDevices()
+	// Forward X-Device-Id (or device_id query) from the browser so core's
+	// device middleware can authorise the list call. With 2+ registered
+	// devices core REJECTS empty header (single-device auto-pick only).
+	deviceID := strings.TrimSpace(c.Get("X-Device-Id"))
+	if deviceID == "" {
+		deviceID = strings.TrimSpace(c.Query("device_id"))
+	}
+	resp, err := h.WA.ListDevices(deviceID)
 	if err != nil {
 		return c.Status(502).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -139,7 +146,15 @@ func (h *Handlers) createDevice(c *fiber.Ctx) error {
 	if strings.TrimSpace(req.DeviceID) == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "device_id required"})
 	}
-	resp, err := h.WA.CreateDevice(req.DeviceID)
+	// authDeviceID = an existing device for middleware to authorise this
+	// call (mandatory when 2+ devices already exist). For first-device
+	// bootstrap browser sends nothing and core's single-device fallback
+	// kicks in (0 devices -> error guidance comes through upstream).
+	authDeviceID := strings.TrimSpace(c.Get("X-Device-Id"))
+	if authDeviceID == "" {
+		authDeviceID = strings.TrimSpace(c.Query("device_id"))
+	}
+	resp, err := h.WA.CreateDevice(req.DeviceID, authDeviceID)
 	if err != nil {
 		return c.Status(502).JSON(fiber.Map{"error": err.Error()})
 	}
